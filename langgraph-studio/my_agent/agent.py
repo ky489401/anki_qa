@@ -1,20 +1,20 @@
-from typing import List, Optional
 import os
+from typing import List, Optional
+
 # --- LangGraph / LangChain imports ---
 from langchain_core.messages import AnyMessage, AIMessage
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.types import interrupt
 from langchain_core.pydantic_v1 import Field
+from langchain_openai import ChatOpenAI
 
 # LangGraph imports
 from langgraph.graph import StateGraph, START, END
+from langgraph.types import interrupt
 
 # Pydantic for runtime validation
 from pydantic import BaseModel, field_validator
+
 from config import OPENAI_API_KEY
-
-
 
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
@@ -31,10 +31,12 @@ class RAGState(BaseModel):
 
     @field_validator("messages", mode="before")
     def validate_messages(cls, v):
-        if not isinstance(v, list) or not all(isinstance(m, HumanMessage)
-                                              or isinstance(m, SystemMessage)
-                                              or isinstance(m, AIMessage)
-                                              for m in v):
+        if not isinstance(v, list) or not all(
+            isinstance(m, HumanMessage)
+            or isinstance(m, SystemMessage)
+            or isinstance(m, AIMessage)
+            for m in v
+        ):
             raise ValueError("messages must be a list of Message objects")
         return v
 
@@ -63,17 +65,23 @@ def analyze_query(state: RAGState):
 
     # Prompt the LLM to analyze ambiguity
     messages = [
-        SystemMessage(content="You are an assistant that determines if a query is ambiguous. "
-                              "If the query is clear, respond with 'CLEAR'. Otherwise, rephrase it "
-                              "into a clarifying question."),
-        HumanMessage(content=f"User query: {user_query}")
+        SystemMessage(
+            content="You are an assistant that determines if a query is ambiguous. "
+            "If the query is clear, respond with 'CLEAR'. Otherwise, rephrase it "
+            "into a clarifying question."
+        ),
+        HumanMessage(content=f"User query: {user_query}"),
     ]
 
     response = structured_llm.invoke(messages)
 
-    return state.copy(update={"is_query_clear": response.is_clear,
-                              "is_query_clear_reason": response.reason,
-                              "clarification_question": response.clarification_question})  # Proceed with the given query
+    return state.copy(
+        update={
+            "is_query_clear": response.is_clear,
+            "is_query_clear_reason": response.reason,
+            "clarification_question": response.clarification_question,
+        }
+    )  # Proceed with the given query
 
 
 # --- Node 2: Get clarification from the user (human-in-the-loop) ---
@@ -81,7 +89,9 @@ def clarify_query(state: RAGState):
     # Interrupt the graph execution to ask the user a question
     # user_response = input(state.clarification_question)
     user_response = interrupt({"question": state.clarification_question})
-    return state.copy(update={"query": user_response})  # Update the query with user's clarification
+    return state.copy(
+        update={"query": user_response}
+    )  # Update the query with user's clarification
 
 
 # --- Node 3: Final Answer Generation ---
@@ -90,8 +100,10 @@ def answer_query(state: RAGState):
 
     # Ask the LLM to generate an answer based on the refined query
     messages = [
-        SystemMessage(content="You are an assistant providing clear and concise answers."),
-        HumanMessage(content=f"User's refined query: {final_query}")
+        SystemMessage(
+            content="You are an assistant providing clear and concise answers."
+        ),
+        HumanMessage(content=f"User's refined query: {final_query}"),
     ]
 
     response = llm.invoke(messages).content
@@ -110,14 +122,13 @@ builder.add_edge(START, "get_question")
 builder.add_edge("get_question", "analyze_query")
 builder.add_conditional_edges(
     "analyze_query",
-    lambda st: "clarify_query" if not st.is_query_clear else "answer_query"
+    lambda st: "clarify_query" if not st.is_query_clear else "answer_query",
 )
 builder.add_edge("clarify_query", "analyze_query")
 builder.add_edge("analyze_query", END)
 
-
 graph = builder.compile()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     for chunk in graph.stream(RAGState(query="what is the meaning of life")):
         print(chunk)
