@@ -1,0 +1,8 @@
+.env
+.ipynb_checkpoints
+.langgraph-data
+/archive/
+/config.py
+.idea/
+/langgraph-studio/.langgraph_api/
+*.ipynb
