@@ -6,3 +6,4 @@
 .idea/
 /langgraph-studio/.langgraph_api/
 *.ipynb
+/artifacts/

@@ -15,18 +15,27 @@ from langgraph.types import interrupt
 from pydantic import BaseModel, field_validator
 
 from config import OPENAI_API_KEY
+from retrieval.faiss_manager import FAISSManager
 
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
+# Load index
+new_faiss_mgr = FAISSManager()
+new_faiss_mgr.load_index(
+    "/Users/kelvinyeung/PycharmProjects/anki_qa/artifacts/faiss.index",
+    "/Users/kelvinyeung/PycharmProjects/anki_qa/artifacts/metadata.pkl",
+)
+
 
 class RAGState(BaseModel):
-    query: str
+    query: Optional[str] = "hi"
     messages: Optional[List[AnyMessage]] = None
     is_query_clear: Optional[bool] = None
     is_query_clear_reason: Optional[str] = None
     clarification_question: Optional[str] = None
+    retrieved_cards: Optional[str] = None
     answer: Optional[str] = None
 
     @field_validator("messages", mode="before")
@@ -45,10 +54,9 @@ class RAGState(BaseModel):
 
 
 def get_question(state: RAGState):
-    # user_response = input("How can i help?")
-
-    user_response = interrupt("How can i help sir?")
-    state = state.copy(update={"query": user_response})
+    if not state.query:
+        user_response = interrupt("How can i help sir?")
+        state = state.copy(update={"query": user_response})
     return state
 
 
@@ -94,6 +102,12 @@ def clarify_query(state: RAGState):
     )  # Update the query with user's clarification
 
 
+def get_anki_cards(state: RAGState):
+    results = new_faiss_mgr.query(state.query, top_k=3)
+    results_fmt = ("\n" * 10 + "********" * 10).join([t["text"] for t in results])
+    return state.copy(update={"retrieved_cards": results_fmt})
+
+
 # --- Node 3: Final Answer Generation ---
 def answer_query(state: RAGState):
     final_query = state.query
@@ -101,9 +115,12 @@ def answer_query(state: RAGState):
     # Ask the LLM to generate an answer based on the refined query
     messages = [
         SystemMessage(
-            content="You are an assistant providing clear and concise answers."
+            content="You are an assistant providing clear and concise answers based on the provided anki cards. "
+            "quote the source the answer is based on"
         ),
-        HumanMessage(content=f"User's refined query: {final_query}"),
+        HumanMessage(
+            content=f"User's refined query: {final_query}. Anki cards as follows:{state.retrieved_cards}"
+        ),
     ]
 
     response = llm.invoke(messages).content
@@ -114,18 +131,24 @@ def answer_query(state: RAGState):
 builder = StateGraph(RAGState)
 
 builder.add_node("get_question", get_question)
-builder.add_node("analyze_query", analyze_query)
-builder.add_node("clarify_query", clarify_query)
+# builder.add_node("analyze_query", analyze_query)
+# builder.add_node("clarify_query", clarify_query)
+builder.add_node("get_anki_cards", get_anki_cards)
 builder.add_node("answer_query", answer_query)
 
 builder.add_edge(START, "get_question")
-builder.add_edge("get_question", "analyze_query")
-builder.add_conditional_edges(
-    "analyze_query",
-    lambda st: "clarify_query" if not st.is_query_clear else "answer_query",
-)
-builder.add_edge("clarify_query", "analyze_query")
-builder.add_edge("analyze_query", END)
+
+builder.add_edge("get_question", "get_anki_cards")
+
+# builder.add_edge("get_question", "analyze_query")
+# builder.add_conditional_edges(
+#     "analyze_query",
+#     lambda st: "clarify_query" if not st.is_query_clear else "get_anki_cards",
+# )
+# builder.add_edge("clarify_query", "analyze_query")
+
+builder.add_edge("get_anki_cards", "answer_query")
+builder.add_edge("answer_query", END)
 
 graph = builder.compile()
 
