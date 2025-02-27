@@ -9,7 +9,7 @@ import faiss
 import numpy as np
 from openai import OpenAI
 
-from my_agent.config import OPENAI_API_KEY
+from my_agent.config import OPENAI_API_KEY, working_directory_path
 
 # Set OpenAI API key (Replace 'your-api-key' with your actual key)
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
@@ -28,14 +28,14 @@ class FAISSManager:
       - pip install openai faiss-cpu numpy
     """
 
-    def __init__(self, model_name: str = "text-embedding-ada-002"):
-        self.model_name = model_name
+    def __init__(self, model_name: str = "text-embedding-3-large"):
+        self.model_name = (
+            model_name  # text-embedding-3-small and text-embedding-3-large
+        )
         self.index = None  # FAISS index
         self.docs = []  # List of document dictionaries
 
-    def get_embeddings(
-        self, texts: List[str], model: str = "text-embedding-3-small"
-    ) -> np.ndarray:
+    def get_embeddings(self, texts: List[str]) -> np.ndarray:
         """
         Generates embeddings for a list of input texts using OpenAI's embedding model.
 
@@ -48,11 +48,11 @@ class FAISSManager:
             np.ndarray: A NumPy array of shape (len(texts), embedding_dim) containing
                         the generated embeddings.
         """
-        embeddings = client.embeddings.create(input=texts, model=model)
+        embeddings = client.embeddings.create(input=texts, model=self.model_name)
         embeddings = np.array([x.embedding for x in embeddings.data])
         return embeddings
 
-    def build_index(self, chunked_docs: List[Dict]) -> None:
+    def build_index(self, chunked_docs: List[Dict], index_col: str) -> None:
         """
         Builds a FAISS index from the provided chunked documents.
 
@@ -61,9 +61,11 @@ class FAISSManager:
                 - "id": unique identifier.
                 - "text": text content.
                 - "meta": additional metadata.
+                - "summary": summary of anki text
+            index_col (str): column to produce index on. Either anki text or the 3 line summary
         """
         self.docs = chunked_docs
-        texts = [doc["text"] for doc in chunked_docs]
+        texts = [doc[index_col] for doc in chunked_docs]
         embeddings = self.get_embeddings(texts)
 
         # Normalize embeddings (L2 normalization) to enable cosine similarity via inner product.
@@ -125,9 +127,11 @@ class FAISSManager:
             doc_data = self.docs[idx]
             results.append(
                 {
+                    "card_title": doc_data["f"],
                     "id": doc_data["id"],
                     "text": doc_data["text"],
                     "meta": doc_data["meta"],
+                    "summary": doc_data["summary"],
                     "score": float(score),
                 }
             )
@@ -158,13 +162,19 @@ if __name__ == "__main__":
     faiss_mgr.build_index(docs)
 
     # Save index
-    faiss_mgr.save_index("artifacts/faiss.index", "artifacts/metadata.pkl")
+    faiss_mgr.save_index(
+        f"{working_directory_path}/faiss.index",
+        f"{working_directory_path}/metadata.pkl",
+    )
 
     # Load index
     new_faiss_mgr = FAISSManager()
-    new_faiss_mgr.load_index("artifacts/faiss.index", "artifacts/metadata.pkl")
+    new_faiss_mgr.load_index(
+        f"{working_directory_path}/artifacts/faiss.index",
+        f"{working_directory_path}/metadata.pkl",
+    )
 
-    # Query
+    # Queryzq
     results = new_faiss_mgr.query("supervised learning", top_k=2)
     for res in results:
         print(res)
