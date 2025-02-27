@@ -2,8 +2,8 @@ import re
 
 from markdownify import markdownify as md
 
-from anki_api import load_anki_query_to_dataframe
-from retrieval.faiss_manager import FAISSManager
+from my_agent.anki.anki_api import load_anki_query_to_dataframe
+from my_agent.retrieval.faiss_manager import FAISSManager
 
 
 def filter_extras(strings):
@@ -31,4 +31,4 @@ if __name__ == "__main__":
     faiss_mgr.build_index(docs)
 
     # Save index
-    faiss_mgr.save_index("artifacts/faiss.index", "artifacts/metadata.pkl")
+    faiss_mgr.save_index("./artifacts/faiss_new.index", "./artifacts/metadata.pkl")

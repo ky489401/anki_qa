@@ -9,7 +9,7 @@ import faiss
 import numpy as np
 from openai import OpenAI
 
-from config import OPENAI_API_KEY
+from my_agent.config import OPENAI_API_KEY
 
 # Set OpenAI API key (Replace 'your-api-key' with your actual key)
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY

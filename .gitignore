@@ -2,8 +2,10 @@
 .ipynb_checkpoints
 .langgraph-data
 /archive/
-/config.py
 .idea/
 /langgraph-studio/.langgraph_api/
 *.ipynb
-/artifacts/
+*artifacts/
+*.pkl
+*config.py
+/.langgraph_api/

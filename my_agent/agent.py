@@ -14,8 +14,8 @@ from langgraph.types import interrupt
 # Pydantic for runtime validation
 from pydantic import BaseModel, field_validator
 
-from config import OPENAI_API_KEY
-from retrieval.faiss_manager import FAISSManager
+from my_agent.config import OPENAI_API_KEY, working_directory_path
+from my_agent.retrieval.faiss_manager import FAISSManager
 
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
@@ -23,14 +23,21 @@ llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
 # Load index
 new_faiss_mgr = FAISSManager()
-new_faiss_mgr.load_index(
-    "/Users/kelvinyeung/PycharmProjects/anki_qa/artifacts/faiss.index",
-    "/Users/kelvinyeung/PycharmProjects/anki_qa/artifacts/metadata.pkl",
-)
+
+if os.path.exists("/.dockerenv"):  # inside docker
+    new_faiss_mgr.load_index(
+        f"/deps/__outer_my_agent/my_agent/artifacts/faiss.index",
+        f"/deps/__outer_my_agent/my_agent/artifacts/metadata.pkl",
+    )
+else:
+    new_faiss_mgr.load_index(
+        f"{working_directory_path}/my_agent/artifacts/faiss.index",
+        f"{working_directory_path}/my_agent/artifacts/metadata.pkl",
+    )
 
 
 class RAGState(BaseModel):
-    query: Optional[str] = "hi"
+    query: Optional[str] = None
     messages: Optional[List[AnyMessage]] = None
     is_query_clear: Optional[bool] = None
     is_query_clear_reason: Optional[str] = None
