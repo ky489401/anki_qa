@@ -4,19 +4,26 @@ from typing import Optional, List
 
 # --- LangGraph / LangChain imports ---
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import MemorySaver
 
 # LangGraph imports
 from langgraph.graph import StateGraph, START, END
-from pydantic import BaseModel, Field
+from langgraph.types import interrupt
+from langsmith import traceable
 
 from my_agent.config import (
     OPENAI_API_KEY,
     embedding_model,
     working_directory_path,
     anki_query,
+    langchain_api_key,
 )
 from my_agent.retrieval.faiss_manager import FAISSManager
+
+os.environ["LANGCHAIN_TRACING_V2"] = "true"  # Enables LangSmith tracing
+os.environ["LANGCHAIN_API_KEY"] = langchain_api_key
 
 # Pydantic for runtime validation
 
@@ -39,6 +46,7 @@ else:
     )
 
 
+@traceable
 def combine_card_fields_into_string(retrieved_cards, columns):
     card_fmt = ""
     for card in retrieved_cards:
@@ -54,20 +62,24 @@ class RAGState(BaseModel):
     retrieved_cards: Optional[List] = None
     is_retrieved_card_relevant: Optional[List] = None
     is_retrieved_card_relevant_simple: Optional[str] = None
+    is_answer_satisfactory: Optional[str] = ""
 
     class Config:
         arbitrary_types_allowed = True  # Still needed for Pydantic compatibility
 
 
+@traceable
 def get_question(state: RAGState):
     return state
 
 
+@traceable
 def get_anki_cards(state: RAGState):
     results = new_faiss_mgr.query(state.query, top_k=5)
     return state.copy(update={"retrieved_cards": results})
 
 
+@traceable
 # --- Node 1: Analyze the query for ambiguity ---
 def rerank_retrieved_cards(state: RAGState):
     class RerankItem(BaseModel):
@@ -107,6 +119,7 @@ def rerank_retrieved_cards(state: RAGState):
 
 
 # --- Node 1: Analyze the query for ambiguity ---
+@traceable
 def rerank_retrieved_cards_simple(state: RAGState):
 
     columns = ["id", "card_title", "summary"]
@@ -143,6 +156,7 @@ def rerank_retrieved_cards_simple(state: RAGState):
 
 
 # --- Node 3: Final Answer Generation ---
+@traceable
 def answer_query(state: RAGState):
     final_query = state.query
 
@@ -190,6 +204,31 @@ def answer_query(state: RAGState):
     )  # Proceed with the given query
 
 
+@traceable
+def human_feedback_node(state: RAGState):
+    """Human feedback node that processes user input and updates the state."""
+    while True:
+        user_feedback = (
+            interrupt({"question": "Do you approve of the output?"}).lower().strip()
+        )
+        if user_feedback in ["yes", "no"]:
+            return state.copy(update={"is_answer_satisfactory": user_feedback})
+
+
+@traceable
+def human_feedback_node_simple(state: RAGState):
+    """Human feedback node that processes user input and updates the state."""
+    while True:
+        user_feedback = input("do you approve of this answer?").lower().strip()
+        # user_feedback = interrupt("Do you approve of the output?\n")
+        if user_feedback == "yes":
+            return END
+        elif user_feedback == "no":
+            return "answer_query"
+        else:
+            print("answer must be yes/no")
+
+
 builder = StateGraph(RAGState)
 
 builder.add_node("get_question", get_question)
@@ -197,15 +236,21 @@ builder.add_node("get_anki_cards", get_anki_cards)
 builder.add_node("rerank_retrieved_cards", rerank_retrieved_cards)
 builder.add_node("rerank_retrieved_cards_simple", rerank_retrieved_cards_simple)
 builder.add_node("answer_query", answer_query)
+builder.add_node("human_feedback_node", human_feedback_node)
 
 builder.add_edge(START, "get_question")
 builder.add_edge("get_question", "get_anki_cards")
 builder.add_edge("get_anki_cards", "rerank_retrieved_cards_simple")
 builder.add_edge("rerank_retrieved_cards_simple", "answer_query")
-builder.add_edge("answer_query", END)
+builder.add_edge("answer_query", "human_feedback_node")
 
+builder.add_conditional_edges(
+    "human_feedback_node",
+    lambda st: "answer_query" if st.is_answer_satisfactory == "no" else END,
+)
+checkpointer = MemorySaver()
 
-graph = builder.compile()
+graph = builder.compile(checkpointer=checkpointer)
 
 if __name__ == "__main__":
     for chunk in graph.stream(RAGState(query="what is the meaning of life")):
