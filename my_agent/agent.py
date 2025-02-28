@@ -1,4 +1,5 @@
 import os
+import re
 from typing import Optional, List
 
 # --- LangGraph / LangChain imports ---
@@ -47,6 +48,7 @@ class RAGState(BaseModel):
     retrieved_cards_fmt: Optional[str] = None
     retrieved_cards: Optional[List] = None
     is_retrieved_card_relevant: Optional[List] = None
+    is_retrieved_card_relevant_simple: Optional[str] = None
 
     class Config:
         arbitrary_types_allowed = True  # Still needed for Pydantic compatibility
@@ -100,14 +102,60 @@ def rerank_retrieved_cards(state: RAGState):
     )  # Proceed with the given query
 
 
+# --- Node 1: Analyze the query for ambiguity ---
+def rerank_retrieved_cards_simple(state: RAGState):
+
+    columns = ["id", "card_title", "summary"]
+
+    card_fmt = combine_card_fields_into_string(state.retrieved_cards, columns)
+
+    # Prompt the LLM to analyze ambiguity
+    messages = [
+        SystemMessage(
+            content="""Identify cards that is useful to the query. Only include card ids for relevant cards. Skip ids for irrelevant Cards. Follow the response format of this example:
+            
+        Relevant Cards:
+        id: 123456
+        card title: xxxxxxx
+        is_relevant_reason: xxxxxx
+        
+        id : .....
+        
+        Irrelevant Cards:
+        (Do Not Put An Id Here)
+        card title: xxxxxxx
+        is_irrelevant_reason: xxxxxx
+        
+        """
+        ),
+        HumanMessage(content=f"User query: {state.query}. Anki cards {card_fmt}"),
+    ]
+
+    response = llm.invoke(messages).content
+
+    return state.copy(
+        update={"is_retrieved_card_relevant_simple": response}
+    )  # Proceed with the given query
+
+
 # --- Node 3: Final Answer Generation ---
 def answer_query(state: RAGState):
     final_query = state.query
 
-    # get ids for set of relevant cards
-    relevant_card_id_lst = set(
-        [card.id for card in state.is_retrieved_card_relevant if card.is_card_relevant]
-    )
+    if state.is_retrieved_card_relevant_simple:
+        relevant_card_id_lst = set(
+            re.findall(r"id:\s*(\d+)", state.is_retrieved_card_relevant_simple)
+        )
+
+    elif state.is_retrieved_card_relevant:
+        # get ids for set of relevant cards
+        relevant_card_id_lst = set(
+            [
+                card.id
+                for card in state.is_retrieved_card_relevant
+                if card.is_card_relevant
+            ]
+        )
 
     retrieved_cards = [
         r for r in state.retrieved_cards if r["id"] in relevant_card_id_lst
@@ -135,24 +183,20 @@ def answer_query(state: RAGState):
     )  # Proceed with the given query
 
 
-def dummy_node(state: RAGState):
-    pass
-
-
 builder = StateGraph(RAGState)
 
 builder.add_node("get_question", get_question)
 builder.add_node("get_anki_cards", get_anki_cards)
-# builder.add_node("rerank_retrieved_cards", rerank_retrieved_cards)
+builder.add_node("rerank_retrieved_cards", rerank_retrieved_cards)
+builder.add_node("rerank_retrieved_cards_simple", rerank_retrieved_cards_simple)
 builder.add_node("answer_query", answer_query)
-builder.add_node("dummy_node", dummy_node)
 
 builder.add_edge(START, "get_question")
 builder.add_edge("get_question", "get_anki_cards")
-# builder.add_edge("get_anki_cards", "rerank_retrieved_cards")
-# builder.add_edge("rerank_retrieved_cards", "answer_query")
-builder.add_edge("get_anki_cards", "answer_query")
+builder.add_edge("get_anki_cards", "rerank_retrieved_cards_simple")
+builder.add_edge("rerank_retrieved_cards_simple", "answer_query")
 builder.add_edge("answer_query", END)
+
 
 graph = builder.compile()
 
