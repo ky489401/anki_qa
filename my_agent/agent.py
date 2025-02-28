@@ -10,7 +10,12 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, START, END
 from pydantic import BaseModel, Field
 
-from my_agent.config import OPENAI_API_KEY, embedding_model, working_directory_path
+from my_agent.config import (
+    OPENAI_API_KEY,
+    embedding_model,
+    working_directory_path,
+    anki_query,
+)
 from my_agent.retrieval.faiss_manager import FAISSManager
 
 # Pydantic for runtime validation
@@ -29,8 +34,8 @@ if os.path.exists("/.dockerenv"):  # inside docker
     )
 else:
     new_faiss_mgr.load_index(
-        f"{working_directory_path}/artifacts/faiss.index",
-        f"{working_directory_path}/artifacts/metadata.pkl",
+        f"{working_directory_path}/artifacts/faiss_{anki_query}.index",
+        f"{working_directory_path}/artifacts/metadata_{anki_query}.pkl",
     )
 
 
@@ -43,8 +48,8 @@ def combine_card_fields_into_string(retrieved_cards, columns):
 
 
 class RAGState(BaseModel):
-    answer: Optional[str] = None
     query: Optional[str] = None
+    answer: Optional[str] = None
     retrieved_cards_fmt: Optional[str] = None
     retrieved_cards: Optional[List] = None
     is_retrieved_card_relevant: Optional[List] = None
@@ -55,7 +60,6 @@ class RAGState(BaseModel):
 
 
 def get_question(state: RAGState):
-    # state = state.copy(update={"query": user_response})
     return state
 
 
@@ -162,14 +166,14 @@ def answer_query(state: RAGState):
     ]
 
     retrieved_cards_fmt = combine_card_fields_into_string(
-        retrieved_cards, columns=["card_title", "summary"]
+        retrieved_cards, columns=["card_title", "summary", "text"]
     )
 
     # Ask the LLM to generate an answer based on the refined query
     messages = [
         SystemMessage(
-            content="You are an assistant providing clear and concise answers based on the provided anki cards. "
-            "quote the source the answer is based on"
+            content="Produce a clear and concise answers based on the provided anki cards. "
+            "Then, List all the card titles which are referenced in the answer."
         ),
         HumanMessage(
             content=f"User's refined query: {final_query}. Anki cards as follows:{retrieved_cards_fmt}"
@@ -179,7 +183,10 @@ def answer_query(state: RAGState):
     response = llm.invoke(messages).content
 
     return state.copy(
-        update={"answer": response, "retrieved_cards_fmt": retrieved_cards_fmt}
+        update={
+            "answer": response,
+            # "retrieved_cards_fmt": retrieved_cards_fmt
+        }
     )  # Proceed with the given query
 
 

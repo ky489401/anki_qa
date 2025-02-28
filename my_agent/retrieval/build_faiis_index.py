@@ -7,7 +7,12 @@ from openai import OpenAI
 from tqdm import tqdm
 
 from my_agent.anki.anki_api import load_anki_query_to_dataframe
-from my_agent.config import working_directory_path, OPENAI_API_KEY, embedding_model
+from my_agent.config import (
+    working_directory_path,
+    OPENAI_API_KEY,
+    embedding_model,
+    anki_query,
+)
 from my_agent.retrieval.faiss_manager import FAISSManager
 
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
@@ -34,12 +39,13 @@ def summarize_text(text, model="gpt-4o-mini"):
 
         return completion.choices[0].message.content.strip()
     except Exception as e:
+        print(e)
         return ""
 
     return completion.choices[0].message.content.strip()
 
 
-def generate_summaries(df, save_every=50, df_summary_path=None):
+def generate_summaries(df, save_every=10, df_summary_path=None):
 
     df = df.copy()
 
@@ -55,35 +61,46 @@ def filter_extras(strings):
     return [s for s in strings if not re.search(pattern, s, re.IGNORECASE)]
 
 
+def prepare_df_for_generate_summaries(df):
+
+    anki_columns = list(df.columns)[::-1]
+    anki_columns = filter_extras(anki_columns)  # remove "extras" fields
+
+    df["text"] = df.apply(
+        lambda row: md(row[anki_columns].str.cat()), axis=1
+    )  # combine all fields into single field
+
+    df = df.rename(columns={"card_number": "id"})
+    df["meta"] = {}
+
+    df = df[["f", "id", "text", "meta"]]
+
+    return df
+
+
 if __name__ == "__main__":
-    query = "deck:Quant::ML::Essential -is:suspended"
+    client = OpenAI()
 
     df_summary_path = os.path.join(
-        working_directory_path, f"my_agent/artifacts/{query}_summary.pkl"
+        working_directory_path, f"artifacts/{anki_query}_summary.pkl"
     )
 
     if os.path.exists(df_summary_path):
         summarized_df = pd.read_pickle(df_summary_path)
-
+        remaining_df = summarized_df[summarized_df.summary.isna()]
+        if len(remaining_df) > 0:
+            remaining_df = prepare_df_for_generate_summaries(remaining_df)
+            remaining_summarized_df = generate_summaries(
+                df=remaining_df,
+                df_summary_path=df_summary_path.replace("_summary", "_summary_add_on"),
+            )
+            summarized_df = pd.concat(
+                [summarized_df[~summarized_df.summary.isna()], remaining_summarized_df]
+            ).reset_index(drop=True)
+            summarized_df.to_pickle(df_summary_path)
     else:
-        client = OpenAI()
-
-        df = load_anki_query_to_dataframe(query)
-
-        anki_columns = list(df.columns)[::-1]
-        anki_columns = filter_extras(anki_columns)  # remove "extras" fields
-
-        df["text"] = df.apply(
-            lambda row: md(row[anki_columns].str.cat()), axis=1
-        )  # combine all fields into single field
-
-        df = df.rename(columns={"card_number": "id"})
-        df["meta"] = {}
-
-        df = df[["f", "id", "text", "meta"]]
-
-        # Generate 3 line summary for each anki card.
-        # Then build index on the 3 line summaries.
+        df = load_anki_query_to_dataframe(anki_query)
+        df = prepare_df_for_generate_summaries(df)
         summarized_df = generate_summaries(df=df, df_summary_path=df_summary_path)
 
     docs = summarized_df.to_dict(orient="records")
@@ -94,6 +111,6 @@ if __name__ == "__main__":
 
     # Save index
     faiss_mgr.save_index(
-        f"{working_directory_path}/my_agent/artifacts/faiss.index",
-        f"{working_directory_path}/my_agent/artifacts/metadata.pkl",
+        f"{working_directory_path}/artifacts/faiss_{anki_query}.index",
+        f"{working_directory_path}/artifacts/metadata_{anki_query}.pkl",
     )

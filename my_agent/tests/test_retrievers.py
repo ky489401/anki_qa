@@ -8,9 +8,9 @@ Unit tests for the retrieval managers:
 """
 
 import unittest
-from retrieval.faiss_manager import FAISSManager
+
 from retrieval.bm25_manager import BM25Manager
-from retrieval.hybrid_retriever import HybridRetriever
+from retrieval.faiss_manager import FAISSManager
 
 
 class TestRetrievers(unittest.TestCase):
@@ -37,7 +37,7 @@ class TestRetrievers(unittest.TestCase):
     def test_faiss_manager(self):
         faiss_mgr = FAISSManager()
         faiss_mgr.build_index(self.docs)
-        results = faiss_mgr.query("supervised learning", top_k=2)
+        results = faiss_mgr.anki_query("supervised learning", top_k=2)
         self.assertLessEqual(len(results), 2)
         for res in results:
             self.assertIn("id", res)
@@ -45,7 +45,7 @@ class TestRetrievers(unittest.TestCase):
 
     def test_bm25_manager(self):
         bm25_mgr = BM25Manager(self.docs)
-        results = bm25_mgr.query("learning", top_k=2)
+        results = bm25_mgr.anki_query("learning", top_k=2)
         self.assertLessEqual(len(results), 2)
         for res in results:
             self.assertIn("text", res)
@@ -60,7 +60,7 @@ class TestRetrievers(unittest.TestCase):
         faiss_mgr.build_index(self.docs)
         bm25_mgr = BM25Manager(self.docs)
         hybrid_retriever = HybridRetriever(faiss_mgr, bm25_mgr)
-        results = hybrid_retriever.query("learning", top_k=3)
+        results = hybrid_retriever.anki_query("learning", top_k=3)
         self.assertGreaterEqual(len(results), 1)
         for res in results:
             self.assertIn("text", res)
